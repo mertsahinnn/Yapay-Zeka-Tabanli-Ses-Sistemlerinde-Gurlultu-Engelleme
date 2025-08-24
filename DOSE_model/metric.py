@@ -622,7 +622,9 @@ if __name__ == "__main__":
 
     # W&B çalıştırmasını başlat
     wandb.init(
-        project="dose_speech_enhancement_metrics",
+        project = "dose_speech_enhancement",
+        group = "base_model",
+        job_type = "evaluation",
         name=f"evaluation_run_on_{os.path.basename(args.output_dir)}",
         config={
             "clean_speech_path": args.clean_speech_path,
