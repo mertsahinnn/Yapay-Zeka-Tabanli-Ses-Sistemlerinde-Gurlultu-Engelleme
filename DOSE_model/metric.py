@@ -611,14 +611,47 @@ def compare(refdir, degdir, use_tqdm=True):
 if __name__ == "__main__":
     import numpy as np
     import sys, time
+    import wandb
+
+
+    # Argumentları ayrıştır
+    parser = argparse.ArgumentParser(description='Evaluate speech enhancement metrics.')
+    parser.add_argument('clean_speech_path', type=str, help='Path to the directory of clean speech files.')
+    parser.add_argument('output_dir', type=str, help='Path to the directory of output speech files.')
+    args = parser.parse_args()
+
+    # W&B çalıştırmasını başlat
+    wandb.init(
+        project="dose_speech_enhancement_metrics",
+        name=f"evaluation_run_on_{os.path.basename(args.output_dir)}",
+        config={
+            "clean_speech_path": args.clean_speech_path,
+            "output_dir": args.output_dir
+        }
+    )
 
     t1 = time.time()
-    res = compare(sys.argv[1], sys.argv[2])
+    res = compare(args.clean_speech_path, args.output_dir)
     t2 = time.time()
-
     pm = np.array([x[0:] for x in res])
     pm = np.mean(pm, axis=0)
+
+    # Metrikleri bir sözlüğe dönüştür
+    metrics = {
+        'csig': pm[0],
+        'cbak': pm[1],
+        'covl': pm[2],
+        'pesq': pm[3],
+        'ssnr': pm[4],
+        'stoi': pm[5]
+    }
+
+    # Metrikleri W&B'ye logla
+    wandb.log(metrics)
+
     print('time: %.3f' % (t2 - t1))
-    print('ref=', sys.argv[1])
-    print('deg=', sys.argv[2])
+    print('ref=', args.clean_speech_path)
+    print('deg=', args.output_dir)
     print('csig:%6.4f cbak:%6.4f covl:%6.4f pesq:%6.4f ssnr:%6.4f stoi:%6.4f' % tuple(pm))
+    # W&B çalıştırmasını sonlandır
+    wandb.finish()
