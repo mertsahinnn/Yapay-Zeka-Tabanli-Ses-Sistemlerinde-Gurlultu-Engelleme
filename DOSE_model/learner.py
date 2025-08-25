@@ -17,6 +17,7 @@ import numpy as np
 import os
 import torch
 import torch.nn as nn
+import wandb # Log icin W&B kutuphanesi
 
 from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data.distributed import DistributedSampler
@@ -26,6 +27,8 @@ from tqdm import tqdm
 from dataset import from_path
 from model import DOSE
 from params import AttrDict
+
+
 
 
 def _nested_map(struct, map_fn):
@@ -170,12 +173,12 @@ class DOSELearner:
     return loss
 
   def _write_summary(self, step, features, loss):
-    writer = self.summary_writer or SummaryWriter(self.model_dir, purge_step=step)
-    
-    writer.add_scalar('train/loss', loss, step)
-    writer.add_scalar('train/grad_norm', self.grad_norm, step)
-    writer.flush()
-    self.summary_writer = writer
+
+    wandb.log({
+      "train/loss" : loss.item(), # Egitim kaybini logla
+      "train/grad_norm" : self.grad_norm, # Egitim gradyan normunu logla
+      "step" : step
+    }, step = step)
 
 
 def _train_impl(replica_id, model, dataset, args, params):
@@ -184,15 +187,33 @@ def _train_impl(replica_id, model, dataset, args, params):
 
   learner = DOSELearner(args.model_dir, model, dataset, opt, params, fp16=args.fp16)
   learner.is_master = (replica_id == 0)
-  learner.restore_from_checkpoint()
+
+  # Arguman belirtilmisse o dosyadan yukle, yoksa varsayilani kullan
+  if args.restore_from:
+    learner.restore_from_checkpoint(filename=args.restore_from)
+  else:
+    learner.restore_from_checkpoint()
   learner.train(max_steps=args.max_steps)
+
+  if learner.is_master:
+    wandb.finish()
 
 
 def train(args, params):
   
-  dataset = from_path('./data/voicebank/noisy_trainset_wav',
-        './data/voicebank/clean_trainset_wav', params)
+  wandb.init(
+        project="dose-speech-enhancement", # W&B projesinin adı
+        job_type="train", # Çalışmanın türü (eğitim)
+        name = f"train_run_on_{os.path.basename(args.noisy_speech_dir )} - {os.path.basename(args.clean_speech_dir)}", # Oturum için benzersiz bir ad oluşturur
+        config= params
+    )
+
+  dataset = from_path(args.noisy_speech_dir, args.clean_speech_dir, params) # Gürültülü ve temiz ses dosyalarını yükle
   device = torch.device('cuda', args.device_num)
   model = DOSE(params).to(device)
+
+  # Modeli ve parametreleri izlemeye basla
+  wandb.watch(model, log="all", log_freq=500)
+
   _train_impl(0, model, dataset, args, params)
 

@@ -28,11 +28,17 @@ if __name__ == '__main__':
   parser = ArgumentParser(description='train (or resume training) a DiffWave model')
   parser.add_argument('model_dir',
       help='directory in which to store model checkpoints and training logs')
+  parser.add_argument('noisy_speech_dir', # Gürültülü ses dosyalarının bulunduğu dizin
+      help='directory containing noisy speech audio files')
+  parser.add_argument('clean_speech_dir',   # Temiz ses dosyalarının bulunduğu dizin
+      help='directory containing clean speech audio files')
   parser.add_argument('--max_steps', default=None, type=int,
       help='maximum number of training steps')
   parser.add_argument('--device_num', default=1, type=int,
       help='train device number')
   parser.add_argument('--fp16', action='store_true', default=False,
       help='use 16-bit floating point operations for training')
-  
+  parser.add_argument('--restore_model_name', type = str, default=None, # Yüklemek için kontrol noktası dosya adi
+      help='path to a checkpoint file to restore from')
+
   main(parser.parse_args())
