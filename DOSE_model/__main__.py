@@ -34,7 +34,7 @@ if __name__ == '__main__':
       help='directory containing clean speech audio files')
   parser.add_argument('--max_steps', default=None, type=int,
       help='maximum number of training steps')
-  parser.add_argument('--device_num', default=1, type=int,
+  parser.add_argument('--device_num', default=0, type=int, # Birden fazla gpu olmadi icin device_num 0 olacak
       help='train device number')
   parser.add_argument('--fp16', action='store_true', default=False,
       help='use 16-bit floating point operations for training')

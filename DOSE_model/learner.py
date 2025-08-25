@@ -189,8 +189,8 @@ def _train_impl(replica_id, model, dataset, args, params):
   learner.is_master = (replica_id == 0)
 
   # Arguman belirtilmisse o dosyadan yukle, yoksa varsayilani kullan
-  if args.restore_from:
-    learner.restore_from_checkpoint(filename=args.restore_from)
+  if args.restore_model_name:
+    learner.restore_from_checkpoint(filename=args.restore_model_name)
   else:
     learner.restore_from_checkpoint()
   learner.train(max_steps=args.max_steps)
@@ -204,7 +204,7 @@ def train(args, params):
   wandb.init(
         project="dose-speech-enhancement", # W&B projesinin adı
         job_type="train", # Çalışmanın türü (eğitim)
-        name = f"train_run_on_{os.path.basename(args.noisy_speech_dir )} - {os.path.basename(args.clean_speech_dir)}", # Oturum için benzersiz bir ad oluşturur
+        name = f"train_run_on_{args.noisy_speech_dir} - {args.clean_speech_dir}", # Oturum için benzersiz bir ad oluşturur
         config= params
     )
 
