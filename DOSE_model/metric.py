@@ -620,17 +620,6 @@ if __name__ == "__main__":
     parser.add_argument('output_dir', type=str, help='Path to the directory of output speech files.')
     args = parser.parse_args()
 
-    # W&B çalıştırmasını başlat
-    wandb.init(
-        project = "dose_speech_enhancement",
-        group = "base_model",
-        job_type = "evaluation",
-        name=f"evaluation_run_on_{os.path.basename(args.output_dir)}",
-        config={
-            "clean_speech_path": args.clean_speech_path,
-            "output_dir": args.output_dir
-        }
-    )
 
     t1 = time.time()
     res = compare(args.clean_speech_path, args.output_dir)
@@ -648,12 +637,7 @@ if __name__ == "__main__":
         'stoi': pm[5]
     }
 
-    # Metrikleri W&B'ye logla
-    wandb.log(metrics)
-
     print('time: %.3f' % (t2 - t1))
     print('ref=', args.clean_speech_path)
     print('deg=', args.output_dir)
     print('csig:%6.4f cbak:%6.4f covl:%6.4f pesq:%6.4f ssnr:%6.4f stoi:%6.4f' % tuple(pm))
-    # W&B çalıştırmasını sonlandır
-    wandb.finish()
