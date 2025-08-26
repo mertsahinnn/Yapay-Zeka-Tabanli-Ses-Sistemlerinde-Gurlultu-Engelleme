@@ -13,6 +13,7 @@
 # limitations under the License.
 # ==============================================================================
 
+# Gerekli kutuphanleri ice aktar
 import numpy as np
 import os
 import torch
@@ -30,7 +31,7 @@ from params import AttrDict
 
 
 
-
+# # İç içe geçmiş veri yapılarını (listeler, sözlükler vb.) bir fonksiyonla eşlemek için yardımcı fonksiyon.
 def _nested_map(struct, map_fn):
   if isinstance(struct, tuple):
     return tuple(_nested_map(x, map_fn) for x in struct)
@@ -41,26 +42,31 @@ def _nested_map(struct, map_fn):
   return map_fn(struct)
 
 
+# DOSE modelini egitmek icin ana sinif
 class DOSELearner:
   def __init__(self, model_dir, model, dataset, optimizer, params, *args, **kwargs):
+    # Modelin kaydedileceği dizini oluştur
     os.makedirs(model_dir, exist_ok=True)
     self.model_dir = model_dir
     self.model = model
     self.dataset = dataset
     self.optimizer = optimizer
     self.params = params
+    # Mixed precision eğitimi icin autocast ve scaler ayarlari
     self.autocast = torch.cuda.amp.autocast(enabled=kwargs.get('fp16', False))
     self.scaler = torch.cuda.amp.GradScaler(enabled=kwargs.get('fp16', False))
     self.step = 0
     self.is_master = True
-    
+
+    # Gürültü programını hesaplar
     beta = np.array(self.params.noise_schedule)
     noise_level = np.cumprod(1 - beta)
     self.noise_level = torch.tensor(noise_level.astype(np.float32))
-    self.loss_fn = nn.L1Loss()
+    self.loss_fn = nn.L1Loss() # L1 kaybı fonksiyonunu kullanır
     self.summary_writer = None
     self.dropout = params.dropout_rate
 
+  # Modelin ve optimizer'in durumunu kaydetmek icin sozluk dondurur
   def state_dict(self):
     if hasattr(self.model, 'module') and isinstance(self.model.module, nn.Module):
       model_state = self.model.module.state_dict()
@@ -74,6 +80,7 @@ class DOSELearner:
         'scaler': self.scaler.state_dict(),
     }
 
+  # Kaydedilmis durumu yukler
   def load_state_dict(self, state_dict):
     if hasattr(self.model, 'module') and isinstance(self.model.module, nn.Module):
       self.model.module.load_state_dict(state_dict['model'])
@@ -83,6 +90,7 @@ class DOSELearner:
     self.scaler.load_state_dict(state_dict['scaler'])
     self.step = state_dict['step']
 
+  # Kontrol noktasini dosyaya kaydeder
   def save_to_checkpoint(self, filename='weights'):
     save_basename = f'{filename}-{self.step}.pt'
     save_name = f'{self.model_dir}/{save_basename}'
@@ -95,6 +103,7 @@ class DOSELearner:
         os.unlink(link_name)
       os.symlink(save_basename, link_name)
 
+  # Dosyadan kontrol noktasini yukler
   def restore_from_checkpoint(self, filename='weights'):
     try:
       checkpoint = torch.load(f'{self.model_dir}/{filename}.pt')
@@ -111,31 +120,38 @@ class DOSELearner:
 
     return
 
+  # Egitim dongusunu baslatir
   def train(self, max_steps=None):
-    
+    # Modeli dogru cihaza (GPU/CPU) tasir
     device = next(self.model.parameters()).device
     
     while True:
+      # Modeli egitim moduna alir
       self.model.train()
       for features in tqdm(self.dataset, desc=f'Epoch {self.step // len(self.dataset)}') if self.is_master else self.dataset:
         if max_steps is not None and self.step >= max_steps:
           return
+        # Verileri dogru cihaza (GPU/CPU) tasir
         features = _nested_map(features, lambda x: x.to(device) if isinstance(x, torch.Tensor) else x)
       
         loss = self.train_step(features)
-        
+
+        # NaN kaybı kontrolü
         if torch.isnan(loss).any():
           raise RuntimeError(f'Detected NaN loss at step {self.step}.')
         if self.is_master:
+          # Belirli adimlarda loglama yapar
           if self.step % 50 == 0:
             self._write_summary(self.step, features, loss)
+          # Her epoch sonunda kontrol noktasini kaydeder
           if self.step % len(self.dataset) == 0:
             self.save_to_checkpoint()
         self.step += 1
 
       
-
+  # Tek bir egitim adimi
   def train_step(self, features):
+    # Gradyanlari sifirlar
     for param in self.model.parameters():
       param.grad = None
 
@@ -148,41 +164,52 @@ class DOSELearner:
     self.noise_level = self.noise_level.to(device)
 
     with self.autocast:
+      # Rastgele bir gurultu seviyesi (t) secer
       t = torch.randint(0, len(self.params.noise_schedule), [N], device=audio.device)
       
       noise_scale = self.noise_level[t].unsqueeze(1)
       noise_scale_sqrt = noise_scale**0.5
       noise = torch.randn_like(audio)
       
+      # Dropout (rastgele bazi verileri maskeler) uygulama
       masks = torch.bernoulli(torch.zeros(N)+self.dropout)
       
       for i in range(masks.size(0)):
         if masks[i] == 1:
           audio[i] = torch.randn_like(audio[i])
       
+      # Gürültülü sesi oluşturur
       noisy_audio = noise_scale_sqrt * audio + (1.0 - noise_scale)**0.5 * noise
+      # Modeli çalıştırır ve tahmini alır
       predicted = self.model(noisy_audio, t, noisy)
+      # Tahmin ile orijinal temiz ses arasindaki kaybi hesaplar
       loss = self.loss_fn(audio_orig, predicted.squeeze(1))
-      
 
+    # Geriye yayilimi (backpropagation) baslatir
     self.scaler.scale(loss).backward()
     self.scaler.unscale_(self.optimizer)
+    # Gradyanlari kirpar
     self.grad_norm = nn.utils.clip_grad_norm_(self.model.parameters(), self.params.max_grad_norm or 1e9)
+    # Optimizasyon adimini gerceklestirir
     self.scaler.step(self.optimizer)
     self.scaler.update()
     return loss
 
+  # W&B loglama yapar
   def _write_summary(self, step, features, loss):
-
     wandb.log({
       "train/loss" : loss.item(), # Egitim kaybini logla
       "train/grad_norm" : self.grad_norm, # Egitim gradyan normunu logla
-      "step" : step
+      "train/features" : features,
+      "train/step" : step,
     }, step = step)
 
-
+# Egitim uygulamasinin ana fonksiyonu
 def _train_impl(replica_id, model, dataset, args, params):
+  # Hız optimizasyonları
   torch.backends.cudnn.benchmark = True
+
+  # Adam optimizasyonu
   opt = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
 
   learner = DOSELearner(args.model_dir, model, dataset, opt, params, fp16=args.fp16)
@@ -196,23 +223,26 @@ def _train_impl(replica_id, model, dataset, args, params):
   learner.train(max_steps=args.max_steps)
 
   if learner.is_master:
-    wandb.finish()
+    wandb.finish() # W&B oturumunu sonlandır
 
-
+# Egitim surecini baslatir
 def train(args, params):
   
   wandb.init(
         project="dose-speech-enhancement", # W&B projesinin adı
         job_type="train", # Çalışmanın türü (eğitim)
         name = f"train_run_on_{args.noisy_speech_dir} - {args.clean_speech_dir}", # Oturum için benzersiz bir ad oluşturur
-        config= params
+        config= params # Parametreleri W&B ile paylaş
     )
 
-  dataset = from_path(args.noisy_speech_dir, args.clean_speech_dir, params) # Gürültülü ve temiz ses dosyalarını yükle
+  # Gürültülü ve temiz ses dosyalarını yükle
+  dataset = from_path(args.noisy_speech_dir, args.clean_speech_dir, params) 
+  # Cihazı ayarla
   device = torch.device('cuda', args.device_num)
+  # DOSE modelini baslatir ve cihaza tasir
   model = DOSE(params).to(device)
 
-  # Modeli ve parametreleri izlemeye basla
+  # Modeli ve parametreleri izlemeye başla
   wandb.watch(model, log="all", log_freq=500)
 
   _train_impl(0, model, dataset, args, params)
