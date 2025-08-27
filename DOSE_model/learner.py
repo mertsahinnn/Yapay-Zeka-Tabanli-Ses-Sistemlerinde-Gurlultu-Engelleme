@@ -30,6 +30,7 @@ from model import DOSE
 from params import AttrDict
 
 from metric import compare
+from metric import composite
 
 
 # # İç içe geçmiş veri yapılarını (listeler, sözlükler vb.) bir fonksiyonla eşlemek için yardımcı fonksiyon.
@@ -144,13 +145,17 @@ class DOSELearner:
         # Sadece ilk ornek icin metrikleri hesapla
         clean_np = audio[0].cpu().numpy()
         predicted_np = predicted[0].cpu().numpy()
-        ssnr, pesq, csig, cbak, covl, stoi = compare(clean_np, predicted_np, self.params.sample_rate)
-        total_metrics["csig"] = csig
-        total_metrics["cbak"] = cbak
-        total_metrics["covl"] = covl
-        total_metrics["pesq"] = pesq
-        total_metrics["ssnr"] = ssnr
-        total_metrics["stoi"] = stoi
+        # uzunluk esitleme
+        min_len = min(len(clean_np), len(predicted_np))
+        clean_np = clean_np[:min_len]
+        predicted_np = predicted_np[:min_len]
+        res = composite(clean_np, predicted_np, self.params.sample_rate)
+        total_metrics["csig"] = res['csig']
+        total_metrics["cbak"] = res['cbak']
+        total_metrics["covl"] = res['covl']
+        total_metrics["pesq"] = res['pesq']
+        total_metrics["ssnr"] = res['ssnr']
+        total_metrics["stoi"] = res['stoi']
         count += 1
     avg_loss = total_loss / count if count > 0 else 0
     avg_metrics= {k: v / count if count > 0 else 0 for k, v in total_metrics.items()}
@@ -162,7 +167,7 @@ class DOSELearner:
       "val/pesq" : avg_metrics["pesq"],
       "val/ssnr" : avg_metrics["ssnr"],
       "val/stoi" : avg_metrics["stoi"],
-    }, step=self.epoch)
+    }, step = epoch)
     self._write_test_summary(self.step, avg_loss)
     return avg_loss
 
@@ -203,7 +208,7 @@ class DOSELearner:
             "train/epoch": epoch
           }, step = epoch)
           if val_dataset is not None:
-            val_loss = self.validate(val_dataset)
+            val_loss = self.validate(val_dataset, epoch)
             wandb.log({
               "val/loss": val_loss,
               "val/epoch": epoch
@@ -307,13 +312,13 @@ def train(args, params):
   wandb.init(
         project="dose-speech-enhancement", # W&B projesinin adı
         job_type="train", # Çalışmanın türü (eğitim)
-        name = f"train_run_on_{args.noisy_speech_dir} - {args.clean_speech_dir} - {params.model_name}", # Oturum için benzersiz bir ad oluşturur
+        name = f"train_run_on_{args.train_noisy_speech_dir} - {args.train_clean_speech_dir}", # Oturum için benzersiz bir ad oluşturur
         config= params # Parametreleri W&B ile paylaş
     )
 
   # Gürültülü ve temiz ses dosyalarını yükle
-  dataset = from_path(args.noisy_speech_dir, args.clean_speech_dir, params)
-  val_dataset = from_path(args.val_noisy_speech_dir, args.val_clean_speech_dir, params) if hasattr(args, 'val_noisy_speech_dir') and hasattr(args, 'val_clean_speech_dir') else None 
+  dataset = from_path(args.train_noisy_speech_dir, args.train_clean_speech_dir, params)
+  val_dataset = from_path(args.val_noisy_speech_dir, args.val_clean_speech_dir, params) if hasattr(args, 'val_noisy_speech_dir') and hasattr(args, 'val_clean_speech_dir') else None
   # Cihazı ayarla
   device = torch.device('cuda', args.device_num)
   # DOSE modelini baslatir ve cihaza tasir
