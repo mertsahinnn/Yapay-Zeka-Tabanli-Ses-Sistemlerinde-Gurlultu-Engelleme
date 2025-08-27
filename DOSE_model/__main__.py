@@ -28,10 +28,14 @@ if __name__ == '__main__':
   parser = ArgumentParser(description='train (or resume training) a DiffWave model')
   parser.add_argument('model_dir',
       help='directory in which to store model checkpoints and training logs')
-  parser.add_argument('noisy_speech_dir', # Gürültülü ses dosyalarının bulunduğu dizin
-      help='directory containing noisy speech audio files')
-  parser.add_argument('clean_speech_dir',   # Temiz ses dosyalarının bulunduğu dizin
-      help='directory containing clean speech audio files')
+  parser.add_argument('train_noisy_speech_dir', # Gürültülü ses dosyalarının bulunduğu dizin
+      help='directory containing train noisy speech audio files')
+  parser.add_argument('train_clean_speech_dir',   # Temiz ses dosyalarının bulunduğu dizin
+      help='directory containing train clean speech audio files')
+  parser.add_argument('val_noisy_speech_dir',
+      help='directory containing validation noisy speech audio files')
+  parser.add_argument('val_clean_speech_dir',
+      help='directory containing validation clean speech audio files')
   parser.add_argument('--max_steps', default=None, type=int,
       help='maximum number of training steps')
   parser.add_argument('--device_num', default=0, type=int, # Birden fazla gpu olmadi icin device_num 0 olacak

@@ -29,6 +29,7 @@ from dataset import from_path
 from model import DOSE
 from params import AttrDict
 
+from metric import compare
 
 
 # # İç içe geçmiş veri yapılarını (listeler, sözlükler vb.) bir fonksiyonla eşlemek için yardımcı fonksiyon.
@@ -119,36 +120,110 @@ class DOSELearner:
     self.summary_writer = writer  
 
     return
+  
+  def validate(self, val_dataset, epoch):
+    self.model.eval()
+    device = next(self.model.parameters()).device
+    total_loss = 0
+    total_metrics = {'csig' : 0, 'cbak' : 0, 'covl' : 0, 'pesq' : 0, 'ssnr' : 0, 'stoi' : 0}
+    count = 0
+    with torch.no_grad():
+      for features in val_dataset:
+        features = _nested_map(features, lambda x: x.to(device) if isinstance(x, torch.Tensor) else x)
+        audio = features['clean_speech']
+        noisy = features['noisy_speech']
+        N, T = audio.shape
+        t = torch.randint(0, len(self.params.noise_schedule), [N], device=audio.device)
+        noise_scale = self.noise_level[t].unsqueeze(1)
+        noise_scale_sqrt = noise_scale**0.5
+        noise = torch.randn_like(audio)
+        noisy_audio = noise_scale_sqrt * audio + (1.0 - noise_scale)**0.5 * noise
+        predicted = self.model(noisy_audio, t, noisy)
+        loss = self.loss_fn(audio, predicted.squeeze(1))
+        total_loss += loss.item()
+        # Sadece ilk ornek icin metrikleri hesapla
+        clean_np = audio[0].cpu().numpy()
+        predicted_np = predicted[0].cpu().numpy()
+        ssnr, pesq, csig, cbak, covl, stoi = compare(clean_np, predicted_np, self.params.sample_rate)
+        total_metrics["csig"] = csig
+        total_metrics["cbak"] = cbak
+        total_metrics["covl"] = covl
+        total_metrics["pesq"] = pesq
+        total_metrics["ssnr"] = ssnr
+        total_metrics["stoi"] = stoi
+        count += 1
+    avg_loss = total_loss / count if count > 0 else 0
+    avg_metrics= {k: v / count if count > 0 else 0 for k, v in total_metrics.items()}
+    wandb.log({
+      "val/loss" : avg_loss,
+      "val/csig" : avg_metrics["csig"],
+      "val/cbak" : avg_metrics["cbak"],
+      "val/covl" : avg_metrics["covl"],
+      "val/pesq" : avg_metrics["pesq"],
+      "val/ssnr" : avg_metrics["ssnr"],
+      "val/stoi" : avg_metrics["stoi"],
+    }, step=self.epoch)
+    self._write_test_summary(self.step, avg_loss)
+    return avg_loss
 
   # Egitim dongusunu baslatir
-  def train(self, max_steps=None):
+  def train(self, max_steps=None, val_dataset=None, early_stopping_patience=10):
     # Modeli dogru cihaza (GPU/CPU) tasir
     device = next(self.model.parameters()).device
+    epoch = 0
     
     while True:
       # Modeli egitim moduna alir
       self.model.train()
+      epoch_loss = 0
+      batch_count = 0
+      best_val_loss = float('inf')
+      patience_counter = 0
+
       for features in tqdm(self.dataset, desc=f'Epoch {self.step // len(self.dataset)}') if self.is_master else self.dataset:
         if max_steps is not None and self.step >= max_steps:
           return
         # Verileri dogru cihaza (GPU/CPU) tasir
         features = _nested_map(features, lambda x: x.to(device) if isinstance(x, torch.Tensor) else x)
-      
+
         loss = self.train_step(features)
 
         # NaN kaybı kontrolü
         if torch.isnan(loss).any():
           raise RuntimeError(f'Detected NaN loss at step {self.step}.')
-        if self.is_master:
-          # Belirli adimlarda loglama yapar
-          if self.step % 50 == 0:
-            self._write_summary(self.step, features, loss)
-          # Her epoch sonunda kontrol noktasini kaydeder
-          if self.step % len(self.dataset) == 0:
-            self.save_to_checkpoint()
+        
+        epoch_loss += loss.item()
+        batch_count += 1
         self.step += 1
 
-      
+        if self.is_master:
+          avg_train_loss = epoch_loss / batch_count if batch_count > 0 else 0
+          wandb.log({
+            "train/loss": avg_train_loss,
+            "train/epoch": epoch
+          }, step = epoch)
+          if val_dataset is not None:
+            val_loss = self.validate(val_dataset)
+            wandb.log({
+              "val/loss": val_loss,
+              "val/epoch": epoch
+            }, step = epoch)
+
+            # best model kaydetme
+            if val_loss < best_val_loss:
+              best_val_loss = val_loss
+              patience_counter = 0
+              self.save_to_checkpoint(filename='best_weights')
+            else:
+              patience_counter += 1
+            
+            # Early stopping
+            if patience_counter >= early_stopping_patience:
+              print(f'Early stopping at epoch {epoch} with best val loss {best_val_loss:.4f}')
+              break
+      self.save_to_checkpoint()
+      epoch += 1
+
   # Tek bir egitim adimi
   def train_step(self, features):
     # Gradyanlari sifirlar
@@ -196,16 +271,17 @@ class DOSELearner:
     return loss
 
   # W&B loglama yapar
-  def _write_summary(self, step, features, loss):
-    wandb.log({
-      "train/loss" : loss.item(), # Egitim kaybini logla
-      "train/grad_norm" : self.grad_norm, # Egitim gradyan normunu logla
-      "train/features" : features,
-      "train/step" : step,
-    }, step = step)
+  
+  #def _write_summary(self, step, features, loss):
+  #  wandb.log({
+  #    "train/loss" : loss.item(), # Egitim kaybini logla
+  #    "train/grad_norm" : self.grad_norm, # Egitim gradyan normunu logla
+  #    "train/features" : features,
+  #    "train/step" : step,
+  #  }, step = step)
 
 # Egitim uygulamasinin ana fonksiyonu
-def _train_impl(replica_id, model, dataset, args, params):
+def _train_impl(replica_id, model, dataset, args, params, val_dataset):
   # Hız optimizasyonları
   torch.backends.cudnn.benchmark = True
 
@@ -220,7 +296,7 @@ def _train_impl(replica_id, model, dataset, args, params):
     learner.restore_from_checkpoint(filename=args.restore_model_name)
   else:
     learner.restore_from_checkpoint()
-  learner.train(max_steps=args.max_steps)
+  learner.train(max_steps=args.max_steps, val_dataset=val_dataset)
 
   if learner.is_master:
     wandb.finish() # W&B oturumunu sonlandır
@@ -231,12 +307,13 @@ def train(args, params):
   wandb.init(
         project="dose-speech-enhancement", # W&B projesinin adı
         job_type="train", # Çalışmanın türü (eğitim)
-        name = f"train_run_on_{args.noisy_speech_dir} - {args.clean_speech_dir}", # Oturum için benzersiz bir ad oluşturur
+        name = f"train_run_on_{args.noisy_speech_dir} - {args.clean_speech_dir} - {params.model_name}", # Oturum için benzersiz bir ad oluşturur
         config= params # Parametreleri W&B ile paylaş
     )
 
   # Gürültülü ve temiz ses dosyalarını yükle
-  dataset = from_path(args.noisy_speech_dir, args.clean_speech_dir, params) 
+  dataset = from_path(args.noisy_speech_dir, args.clean_speech_dir, params)
+  val_dataset = from_path(args.val_noisy_speech_dir, args.val_clean_speech_dir, params) if hasattr(args, 'val_noisy_speech_dir') and hasattr(args, 'val_clean_speech_dir') else None 
   # Cihazı ayarla
   device = torch.device('cuda', args.device_num)
   # DOSE modelini baslatir ve cihaza tasir
@@ -245,5 +322,5 @@ def train(args, params):
   # Modeli ve parametreleri izlemeye başla
   wandb.watch(model, log="all", log_freq=500)
 
-  _train_impl(0, model, dataset, args, params)
+  _train_impl(0, model, dataset, args, params, val_dataset)
 
