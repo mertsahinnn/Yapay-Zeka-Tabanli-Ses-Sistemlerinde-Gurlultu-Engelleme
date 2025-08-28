@@ -143,19 +143,23 @@ class DOSELearner:
         loss = self.loss_fn(audio, predicted.squeeze(1))
         total_loss += loss.item()
         # Sadece ilk ornek icin metrikleri hesapla
-        clean_np = audio[0].cpu().numpy()
-        predicted_np = predicted[0].cpu().numpy()
+        # Clean audio: [batch_size, lenght] -> [lenght]
+        clean_np = audio[0].cpu().numpy() # [3200]
+
+        # Predicted audio: [batch_size, 1, lenght] -> [lenght]
+        predicted_np = predicted[0].squeeze().cpu().numpy()
         # uzunluk esitleme
         min_len = min(len(clean_np), len(predicted_np))
         clean_np = clean_np[:min_len]
         predicted_np = predicted_np[:min_len]
         res = composite(clean_np, predicted_np, self.params.sample_rate)
-        total_metrics["csig"] = res['csig']
-        total_metrics["cbak"] = res['cbak']
-        total_metrics["covl"] = res['covl']
-        total_metrics["pesq"] = res['pesq']
-        total_metrics["ssnr"] = res['ssnr']
-        total_metrics["stoi"] = res['stoi']
+        
+        total_metrics["ssnr"] += res[0]
+        total_metrics["pesq"] += res[1]
+        total_metrics["csig"] += res[2]
+        total_metrics["cbak"] += res[3]
+        total_metrics["covl"] += res[4]
+        total_metrics["stoi"] += res[5]
         count += 1
     avg_loss = total_loss / count if count > 0 else 0
     avg_metrics= {k: v / count if count > 0 else 0 for k, v in total_metrics.items()}
@@ -176,14 +180,15 @@ class DOSELearner:
     # Modeli dogru cihaza (GPU/CPU) tasir
     device = next(self.model.parameters()).device
     epoch = 0
+    best_val_loss = float('inf')
+    patience_counter = 0
     
     while True:
       # Modeli egitim moduna alir
       self.model.train()
       epoch_loss = 0
       batch_count = 0
-      best_val_loss = float('inf')
-      patience_counter = 0
+     
 
       for features in tqdm(self.dataset, desc=f'Epoch {self.step // len(self.dataset)}') if self.is_master else self.dataset:
         if max_steps is not None and self.step >= max_steps:
@@ -201,18 +206,22 @@ class DOSELearner:
         batch_count += 1
         self.step += 1
 
-        if self.is_master:
-          avg_train_loss = epoch_loss / batch_count if batch_count > 0 else 0
-          wandb.log({
+        ## Burada bir loglama hatasi var step konusunda bir hata var onu coz
+        ## Hatasi colabde var onu  bakarak hareket edebilirsin
+
+      if self.is_master:
+        avg_train_loss = epoch_loss / batch_count if batch_count > 0 else 0
+        wandb.log({
             "train/loss": avg_train_loss,
             "train/epoch": epoch
-          }, step = epoch)
-          if val_dataset is not None:
+        }, step=self.step)  # ✅ self.step kullan
+    
+        if val_dataset is not None:
             val_loss = self.validate(val_dataset, epoch)
             wandb.log({
-              "val/loss": val_loss,
-              "val/epoch": epoch
-            }, step = epoch)
+                "val/loss": val_loss,  
+                "val/epoch": epoch
+            }, step=self.step)  # ✅ self.step kullan
 
             # best model kaydetme
             if val_loss < best_val_loss:
@@ -221,7 +230,7 @@ class DOSELearner:
               self.save_to_checkpoint(filename='best_weights')
             else:
               patience_counter += 1
-            
+              
             # Early stopping
             if patience_counter >= early_stopping_patience:
               print(f'Early stopping at epoch {epoch} with best val loss {best_val_loss:.4f}')
