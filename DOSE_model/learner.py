@@ -93,8 +93,8 @@ class DOSELearner:
     self.step = state_dict['step']
 
   # Kontrol noktasini dosyaya kaydeder
-  def save_to_checkpoint(self, filename='weights'):
-    save_basename = f'{filename}-{self.step}.pt'
+  def save_to_checkpoint(self, filename='weights', epoch=None):
+    save_basename = f'{filename}-{epoch}.pt' # epoch sayisi ile kaydet
     save_name = f'{self.model_dir}/{save_basename}'
     link_name = f'{self.model_dir}/{filename}.pt'
     torch.save(self.state_dict(), save_name)
@@ -134,20 +134,20 @@ class DOSELearner:
         audio = features['clean_speech']
         noisy = features['noisy_speech']
         N, T = audio.shape
-        t = torch.randint(0, len(self.params.noise_schedule), [N], device=audio.device)
-        noise_scale = self.noise_level[t].unsqueeze(1)
-        noise_scale_sqrt = noise_scale**0.5
-        noise = torch.randn_like(audio)
-        noisy_audio = noise_scale_sqrt * audio + (1.0 - noise_scale)**0.5 * noise
-        predicted = self.model(noisy_audio, t, noisy)
+        t = torch.randint(0, len(self.params.noise_schedule), [N], device=audio.device)  
+
+        # Verilen gurultu uzerinde calismasi lazim validation kisminda 
+        predicted = self.model(noisy, torch.zeros_like(t), noisy)
         loss = self.loss_fn(audio, predicted.squeeze(1))
         total_loss += loss.item()
+
         # Sadece ilk ornek icin metrikleri hesapla
         # Clean audio: [batch_size, lenght] -> [lenght]
         clean_np = audio[0].cpu().numpy() # [3200]
 
         # Predicted audio: [batch_size, 1, lenght] -> [lenght]
         predicted_np = predicted[0].squeeze().cpu().numpy()
+        
         # uzunluk esitleme
         min_len = min(len(clean_np), len(predicted_np))
         clean_np = clean_np[:min_len]
@@ -164,14 +164,13 @@ class DOSELearner:
     avg_loss = total_loss / count if count > 0 else 0
     avg_metrics= {k: v / count if count > 0 else 0 for k, v in total_metrics.items()}
     wandb.log({
-      "val/loss" : avg_loss,
       "val/csig" : avg_metrics["csig"],
       "val/cbak" : avg_metrics["cbak"],
       "val/covl" : avg_metrics["covl"],
       "val/pesq" : avg_metrics["pesq"],
       "val/ssnr" : avg_metrics["ssnr"],
       "val/stoi" : avg_metrics["stoi"],
-    }, step = epoch)
+    }, step = epoch) # step olarak epoch kullan
     self._write_test_summary(self.step, avg_loss)
     return avg_loss
 
@@ -189,8 +188,7 @@ class DOSELearner:
       epoch_loss = 0
       batch_count = 0
      
-
-      for features in tqdm(self.dataset, desc=f'Epoch {self.step // len(self.dataset)}') if self.is_master else self.dataset:
+      for features in tqdm(self.dataset, desc=f'Epoch {epoch}') if self.is_master else self.dataset:
         if max_steps is not None and self.step >= max_steps:
           return
         # Verileri dogru cihaza (GPU/CPU) tasir
@@ -206,36 +204,42 @@ class DOSELearner:
         batch_count += 1
         self.step += 1
 
-        ## Burada bir loglama hatasi var step konusunda bir hata var onu coz
-        ## Hatasi colabde var onu  bakarak hareket edebilirsin
-
       if self.is_master:
         avg_train_loss = epoch_loss / batch_count if batch_count > 0 else 0
-        wandb.log({
-            "train/loss": avg_train_loss,
-            "train/epoch": epoch
-        }, step=self.step)  # ✅ self.step kullan
-    
+        
+        # Epoch sonunda validation yap
+        val_loss = None
         if val_dataset is not None:
             val_loss = self.validate(val_dataset, epoch)
-            wandb.log({
-                "val/loss": val_loss,  
-                "val/epoch": epoch
-            }, step=self.step)  # ✅ self.step kullan
 
-            # best model kaydetme
+        # Train ve validation loss'unu epoch bazında aynı grafikte daha duzgun gorunur
+        log_dict = {
+            "loss/train": avg_train_loss,
+        }
+        
+        if val_loss is not None:
+            log_dict["loss/validation"] = val_loss
+
+        wandb.log(log_dict, step=epoch)  # step olarak epoch kullan
+
+        # Early stopping ve best model kaydetme
+        if val_loss is not None:
             if val_loss < best_val_loss:
               best_val_loss = val_loss
               patience_counter = 0
-              self.save_to_checkpoint(filename='best_weights')
+              self.save_to_checkpoint(filename='best_weights', epoch=epoch)
+              print(f'🎉 New best validation loss: {val_loss:.4f} at epoch {epoch}')
             else:
               patience_counter += 1
               
             # Early stopping
             if patience_counter >= early_stopping_patience:
-              print(f'Early stopping at epoch {epoch} with best val loss {best_val_loss:.4f}')
+              print(f'⏹️ Early stopping at epoch {epoch} with best val loss {best_val_loss:.4f}')
               break
-      self.save_to_checkpoint()
+              
+        print(f'📊 Epoch {epoch}: Train Loss = {avg_train_loss:.4f}' + 
+              (f', Val Loss = {val_loss:.4f}' if val_loss is not None else ''))
+              
       epoch += 1
 
   # Tek bir egitim adimi
@@ -334,7 +338,7 @@ def train(args, params):
   model = DOSE(params).to(device)
 
   # Modeli ve parametreleri izlemeye başla
-  wandb.watch(model, log="all", log_freq=500)
+  # wandb.watch(model, log="all", log_freq=500)
 
   _train_impl(0, model, dataset, args, params, val_dataset)
 
