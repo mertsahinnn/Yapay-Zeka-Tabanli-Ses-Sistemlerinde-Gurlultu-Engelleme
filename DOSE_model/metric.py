@@ -253,8 +253,14 @@ def llr(clean_speech, processed_speech, fs, frameLen=0.03, overlap=0.75):
         A_clean, R_clean = lpcoeff(clean_speech_framed[ii, :], P)
         A_proc, R_proc = lpcoeff(processed_speech_framed[ii, :], P)
 
-        numerators[ii] = A_proc.dot(toeplitz(R_clean).dot(A_proc.T))
-        denominators[ii] = A_clean.dot(toeplitz(R_clean).dot(A_clean.T))
+        # Fix the matrix multiplication by ensuring proper dimensions
+        A_clean_2d = A_clean.reshape(-1, 1)  # Convert to column vector
+        A_proc_2d = A_proc.reshape(-1, 1)    # Convert to column vector
+        
+        toeplitz_R_clean = toeplitz(R_clean)
+        
+        numerators[ii] = A_proc_2d.T.dot(toeplitz_R_clean).dot(A_proc_2d).item()
+        denominators[ii] = A_clean_2d.T.dot(toeplitz_R_clean).dot(A_clean_2d).item()
 
     frac = numerators / denominators
     frac[frac <= 0] = 1000

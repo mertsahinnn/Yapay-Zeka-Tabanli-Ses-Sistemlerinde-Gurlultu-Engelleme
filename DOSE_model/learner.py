@@ -98,6 +98,20 @@ class DOSELearner:
     save_name = f'{self.model_dir}/{save_basename}'
     link_name = f'{self.model_dir}/{filename}.pt'
     torch.save(self.state_dict(), save_name)
+
+    # Wandb artifact olusturma ve kaydetme
+    artifact = wandb.Artifact(
+      name = f"model-{filename}",
+      type = "model",
+      description = f"Model weights at epoch {epoch}",
+      metadata = {
+          "epoch": epoch,
+          "model": filename
+      }
+    )
+    artifact.add_file(save_name)
+    wandb.log_artifact(artifact)
+
     if os.name == 'nt':
       torch.save(self.state_dict(), link_name)
     else:
@@ -147,7 +161,7 @@ class DOSELearner:
 
         # Predicted audio: [batch_size, 1, lenght] -> [lenght]
         predicted_np = predicted[0].squeeze().cpu().numpy()
-        
+
         # uzunluk esitleme
         min_len = min(len(clean_np), len(predicted_np))
         clean_np = clean_np[:min_len]
@@ -326,8 +340,20 @@ def train(args, params):
         project="dose-speech-enhancement", # W&B projesinin adı
         job_type="train", # Çalışmanın türü (eğitim)
         name = f"train_run_on_{args.train_noisy_speech_dir} - {args.train_clean_speech_dir}", # Oturum için benzersiz bir ad oluşturur
-        config= params # Parametreleri W&B ile paylaş
+        config= {
+          'learning_rate': params.learning_rate,
+          'dropout_rate': params.dropout_rate,
+          'step1': params.step1,
+          'step2': params.step2,
+        } # Parametreleri W&B ile paylaş
     )
+
+  # wandb.config'i params icine uygula
+  config = wandb.config
+  params.learning_rate = config.learning_rate
+  params.dropout_rate = config.dropout_rate
+  params.step1 = config.step1
+  params.step2 = config.step2
 
   # Gürültülü ve temiz ses dosyalarını yükle
   dataset = from_path(args.train_noisy_speech_dir, args.train_clean_speech_dir, params)
