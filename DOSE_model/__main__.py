@@ -38,6 +38,8 @@ if __name__ == '__main__':
       help='directory containing validation clean speech audio files')
   parser.add_argument('--max_steps', default=None, type=int,
       help='maximum number of training steps')
+  parser.add_argument('--max_epochs', default=None, type=int,
+      help='maximum number of training epochs')
   parser.add_argument('--device_num', default=0, type=int, # Birden fazla gpu olmadi icin device_num 0 olacak
       help='train device number')
   parser.add_argument('--fp16', action='store_true', default=False,

@@ -262,7 +262,12 @@ def llr(clean_speech, processed_speech, fs, frameLen=0.03, overlap=0.75):
         numerators[ii] = A_proc_2d.T.dot(toeplitz_R_clean).dot(A_proc_2d).item()
         denominators[ii] = A_clean_2d.T.dot(toeplitz_R_clean).dot(A_clean_2d).item()
 
-    frac = numerators / denominators
+    # frac = numerators / denominators
+    denominators_safe = np.where(np.abs(denominators) < eps, eps, denominators)
+    frac = numerators / denominators_safe
+    
+    # NaN ve infinite degerleri kontrol et
+    frac = np.where(np.isnan(frac) | np.isinf(frac), 100, frac)
     frac[frac <= 0] = 1000
     distortion = np.log(frac)
     # distortion[distortion>2]=2 # this line is not in composite measure matlab implementation of loizou
