@@ -43,6 +43,11 @@ params = AttrDict(
     hop_samples=256,
     crop_mel_frames=62,  # Probably an error in paper.
     dropout_rate = 0.5,
+    
+    # EMA params
+    use_ema = True,
+    ema_decay = 0.9999,
+    
     # Model params
     residual_layers=30,
     residual_channels=64,

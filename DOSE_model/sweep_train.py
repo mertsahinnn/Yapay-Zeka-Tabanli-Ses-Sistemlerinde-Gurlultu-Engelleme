@@ -16,7 +16,7 @@ def main():
     val_clean_speech_dir='/content/datasets/content/LKFS/validation/clean',
     max_epochs=10,
     device_num=0,
-    fp16=True,
+    fp16=False,
     restore_model_name="weights_fixed"
 )
   train(args, params)

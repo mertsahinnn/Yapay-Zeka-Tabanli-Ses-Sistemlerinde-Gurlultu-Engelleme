@@ -46,6 +46,55 @@ def _nested_map(struct, map_fn):
     return { k: _nested_map(v, map_fn) for k, v in struct.items() }
   return map_fn(struct)
 
+class EMAHelper:
+  """Exponential Moving Average yardimc sinif"""
+  
+  def __init__(self, model, decay=0.9999):
+     self.decay = decay
+     self.shadow = {}
+     self.backup = {}
+     
+     # Model parametrelerinin shadow kopyasini olustur
+     for name, param in model.named_parameters():
+         if param.requires_grad:
+             self.shadow[name] = param.data.clone()
+             
+  
+  def update(self, model):
+    """EMA parametrelerini guncelle"""
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            assert name in self.shadow
+            new_average = (1.0 - self.decay) * param.data + self.decay * self.shadow[name]
+            self.shadow[name] = new_average.clone()
+            
+  
+  def apply_shadow(self, model):
+    """Model parametrelerini EMA parametreleriyle degistir"""
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            assert name in self.shadow
+            self.backup[name] = param.data.clone()
+            param.data = self.shadow[name]
+            
+  def restore(self, model):
+    """Orijinal parametreleri geri yukle"""
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            assert name in self.backup
+            param.data = self.backup[name]
+    self.backup.clear()
+    
+  def state_dict(self):
+    """EMA state'ini kaydet"""
+    return {'shadow': self.shadow, 'decay': self.decay}
+
+
+  def load_state_dict(self, state_dict):
+    """EMA state'ini yukle"""
+    self.shadow = state_dict['shadow']
+    self.decay = state_dict['decay']
+    
 
 # DOSE modelini egitmek icin ana sinif
 class DOSELearner:
@@ -64,12 +113,12 @@ class DOSELearner:
     # Mixed precision eğitimi icin autocast ve scaler ayarları
     try:
       #pyTorch >= 1.10 icin yeni APi
-      self.autocast = torch.amp.autocast('cuda', enabled=kwargs.get('fp16', False))
-      self.scaler = torch.amp.GradScaler('cuda', enabled=kwargs.get('fp16', False))
+      self.autocast = torch.amp.autocast('cuda', enabled=kwargs.get('fp16', True))
+      self.scaler = torch.amp.GradScaler('cuda', enabled=kwargs.get('fp16', True))
     except AttributeError:
       # Eski pyTorch veriyonlari icin fallback
-      self.autocast = torch.cuda.amp.autocast(enabled=kwargs.get('fp16', False))
-      self.scaler = torch.cuda.amp.GradScaler(enabled=kwargs.get('fp16', False))
+      self.autocast = torch.cuda.amp.autocast(enabled=kwargs.get('fp16', True))
+      self.scaler = torch.cuda.amp.GradScaler(enabled=kwargs.get('fp16', True))
       
     self.step = 0
     self.is_master = True
@@ -78,9 +127,18 @@ class DOSELearner:
     beta = np.array(self.params.noise_schedule)
     noise_level = np.cumprod(1 - beta)
     self.noise_level = torch.tensor(noise_level.astype(np.float32))
-    self.loss_fn = nn.L1Loss() # L1 kaybı fonksiyonunu kullanır
+    self.loss_fn = nn.L1Loss() # L1(MAE) kaybı fonksiyonunu kullanır
     self.summary_writer = None
     self.dropout = params.dropout_rate
+    
+    # EMA helper'i baslat
+    self.use_ema = kwargs.get('use_ema', True)
+    if self.use_ema:
+        ema_decay = kwargs.get('ema_decay', 0.9999)
+        self.ema_helper = EMAHelper(model, decay=ema_decay)
+        print(f"🔄 EMA aktif edildi (decay={ema_decay})")
+    else:
+        self.ema_helper = None
 
   # Modelin ve optimizer'in durumunu kaydetmek icin sozluk dondurur
   def state_dict(self):
@@ -88,13 +146,19 @@ class DOSELearner:
       model_state = self.model.module.state_dict()
     else:
       model_state = self.model.state_dict()
-    return {
+    state = {
         'step': self.step,
         'model': { k: v.cpu() if isinstance(v, torch.Tensor) else v for k, v in model_state.items() },
         'optimizer': { k: v.cpu() if isinstance(v, torch.Tensor) else v for k, v in self.optimizer.state_dict().items() },
         'params': dict(self.params),
         'scaler': self.scaler.state_dict(),
     }
+    
+    # EMA state'ini kaydet
+    if self.ema_helper is not None:
+        state['ema'] = self.ema_helper.state_dict()
+        
+    return state
 
   # Kaydedilmis durumu yukler
   def load_state_dict(self, state_dict):
@@ -106,6 +170,10 @@ class DOSELearner:
     self.optimizer.load_state_dict(state_dict['optimizer'])
     self.scaler.load_state_dict(state_dict['scaler'])
     self.step = state_dict['step']
+    
+    # EMA state'ini yukle (geriye uyumluluk icin kontrol)
+    if self.ema_helper is not None and 'ema' in state_dict:
+      self.ema_helper.load_state_dict(state_dict['ema'])
 
   # Kontrol noktasini dosyaya kaydeder
   def save_to_checkpoint(self, filename='weights', epoch: Optional[int] = None):
@@ -212,77 +280,88 @@ class DOSELearner:
     Returns:
         float: Ortalama validation loss
     """
-    self.model.eval()
-    device = next(self.model.parameters()).device
-    
-    # Metrics initialization
-    total_loss = 0.0
-    total_metrics = {
-        'csig': 0.0, 'cbak': 0.0, 'covl': 0.0, 
-        'pesq': 0.0, 'ssnr': 0.0, 'stoi': 0.0
-    }
-    count = 0
-    batch_metrics_list = []
-    
-    # Validation başlangıç zamanı
-    val_start_time = time.time()
-    
+    # EMA parametrelerini uygula
+    if self.ema_helper is not None:
+      self.ema_helper.apply_shadow(self.model)
     try:
-        with torch.no_grad():
-            # Progress bar ile validation
-            val_iterator = tqdm(val_dataset, desc=f'Validation Epoch {epoch}', 
-                              leave=False, disable=not self.is_master)
-            
-            for batch_idx, features in enumerate(val_iterator):
-                try:
-                    # Verileri device'a taşı
-                    features = _nested_map(features, 
-                                         lambda x: x.to(device) if isinstance(x, torch.Tensor) else x)
+      self.model.eval()
+      device = next(self.model.parameters()).device
+
+      # Metrics initialization
+      total_loss = 0.0
+      total_metrics = {
+          'csig': 0.0, 'cbak': 0.0, 'covl': 0.0, 
+          'pesq': 0.0, 'ssnr': 0.0, 'stoi': 0.0
+      }
+      count = 0
+      batch_metrics_list = []
+
+      # Validation başlangıç zamanı
+      val_start_time = time.time()
+
+      try:
+          with torch.no_grad():
+              # Progress bar ile validation
+              val_iterator = tqdm(val_dataset, desc=f'Validation Epoch {epoch}', 
+                                leave=False, disable=not self.is_master)
+
+              for batch_idx, features in enumerate(val_iterator):
+                  try:
+                      # Verileri device'a taşı
+                      features = _nested_map(features, 
+                                           lambda x: x.to(device) if isinstance(x, torch.Tensor) else x)
+
+                      # Batch validation
+                      batch_loss, batch_metrics = self._validate_batch(features)
+
+                      if batch_loss is not None and batch_metrics is not None:
+                          total_loss += batch_loss
+                          batch_metrics_list.append(batch_metrics)
+
+                          # Accumulate metrics
+                          for key in total_metrics.keys():
+                              total_metrics[key] += batch_metrics.get(key, 0.0)
+
+                          count += 1
+
+                          # Progress bar güncelleme
+                          if self.is_master:
+                              val_iterator.set_postfix({
+                                  'Loss': f'{batch_loss:.4f}',
+                                  'PESQ': f'{batch_metrics.get("pesq", 0):.3f}',
+                                  'STOI': f'{batch_metrics.get("stoi", 0):.3f}'
+                              })
+
+                  except Exception as e:
+                      print(f"Validation batch {batch_idx} hatası: {e}")
+                      continue
                     
-                    # Batch validation
-                    batch_loss, batch_metrics = self._validate_batch(features)
-                    
-                    if batch_loss is not None and batch_metrics is not None:
-                        total_loss += batch_loss
-                        batch_metrics_list.append(batch_metrics)
-                        
-                        # Accumulate metrics
-                        for key in total_metrics.keys():
-                            total_metrics[key] += batch_metrics.get(key, 0.0)
-                        
-                        count += 1
-                        
-                        # Progress bar güncelleme
-                        if self.is_master:
-                            val_iterator.set_postfix({
-                                'Loss': f'{batch_loss:.4f}',
-                                'PESQ': f'{batch_metrics.get("pesq", 0):.3f}',
-                                'STOI': f'{batch_metrics.get("stoi", 0):.3f}'
-                            })
-                    
-                except Exception as e:
-                    print(f"Validation batch {batch_idx} hatası: {e}")
-                    continue
+      except Exception as e:
+          print(f"Validation sırasında kritik hata: {e}")
+          return float('inf')
+
+      # Sonuçları hesapla
+      avg_loss, avg_metrics, metric_std = self._compute_validation_results(
+          total_loss, total_metrics, batch_metrics_list, count
+      )
+
+      # Validation süresini hesapla
+      val_duration = time.time() - val_start_time
+
+      if self.is_master:
+        ema_tag = " (EMA)" if self.ema_helper is not None else ""
+        print(f"🔍 Val Loss{ema_tag}: {avg_loss:.4f} | PESQ: {avg_metrics['pesq']:.3f} | STOI: {avg_metrics['stoi']:.3f}")
+
+      # WandB'a logla
+      self._log_to_wandb(avg_metrics, avg_loss, metric_std, epoch)
+
+      return avg_loss
     
-    except Exception as e:
-        print(f"Validation sırasında kritik hata: {e}")
-        return float('inf')
-    
-    # Sonuçları hesapla
-    avg_loss, avg_metrics, metric_std = self._compute_validation_results(
-        total_loss, total_metrics, batch_metrics_list, count
-    )
-    
-    # Validation süresini hesapla
-    val_duration = time.time() - val_start_time
-    
-    if self.is_master:
-      print(f"🔍 Val Loss: {avg_loss:.4f} | PESQ: {avg_metrics['pesq']:.3f} | STOI: {avg_metrics['stoi']:.3f}")
-    
-    # WandB'a logla
-    self._log_to_wandb(avg_metrics, avg_loss, metric_std, epoch)
-    
-    return avg_loss
+    finally:
+      # Orijinal parametreleri geri yukle
+      if self.ema_helper is not None:
+        self.ema_helper.restore(self.model)
+        
 
   def _validate_batch(self, features: Dict) -> Tuple[Optional[float], Optional[Dict]]:
     """
@@ -537,6 +616,11 @@ class DOSELearner:
     # Optimizasyon adimini gerceklestirir
     self.scaler.step(self.optimizer)
     self.scaler.update()
+    
+    # EMA guncelleme
+    if self.ema_helper is not None:
+      self.ema_helper.update(self.model)
+      
     return loss
 
   # W&B loglama yapar
@@ -556,8 +640,17 @@ def _train_impl(replica_id, model, dataset, args, params, val_dataset):
 
   # Adam optimizasyonu
   opt = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
-
-  learner = DOSELearner(args.model_dir, model, dataset, opt, params, fp16=args.fp16)
+  
+  learner = DOSELearner(
+    args.model_dir,
+    model,
+    dataset,
+    opt,
+    params,
+    fp16=args.fp16,
+    use_ema=getattr(args, 'use_ema', True), # EMA parametresi
+    ema_decay=getattr(args, 'ema_decay', 0.999)
+  )
   learner.is_master = (replica_id == 0)
 
   # Arguman belirtilmisse o dosyadan yukle, yoksa varsayilani kullan
@@ -582,6 +675,8 @@ def train(args, params):
           'dropout_rate': params.dropout_rate,
           'step1': params.step1,
           'step2': params.step2,
+          'use_ema': params.use_ema,
+          'ema_decay': params.ema_decay
         } # Parametreleri W&B ile paylaş
     )
 
