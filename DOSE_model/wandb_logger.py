@@ -1,8 +1,127 @@
+from typing import Any, Dict, Optional
+from pathlib import Path 
+
 import wandb # W&B kütüphanesi
 import os # İşletim sistemi fonksiyonları için
 import numpy as np # Sayısal işlemler için
 import time # Zaman ölçümü için
 from metric import compare # Metrik hesaplama fonksiyonu
+
+class WandBTrainingLogger:
+    '''Egitim surecindeki wandb loglama islemlerini yapar'''
+    
+    def __init__(self, project_name: str = "dose-speech-enhancement"):
+        
+        self.project_name = project_name
+        self.run = None
+        
+    def init_run(self, run_name: str, config: Dict[str, Any], job_type: str = "train"):
+        
+        
+        try:
+            self.run = wandb.init(
+                project=self.project_name,
+                name=run_name,
+                config=config,
+                job_type=job_type
+            )
+            print(f"W&B run initialized: {run_name}")
+
+        except Exception as e:
+            print(f"Error initializing W&B run: {e}")
+            raise
+    
+    def get_config(self):
+        if self.run is not None:
+            return self.run.config
+        else:
+            raise ValueError("W&B run is not initialized. Call init_run() first.")
+    
+    def log_metrics(self, metrics: Dict[str, float], step: Optional[int] = None, prefix: str = ""):
+        
+        try:
+            log_dict = {}
+            for key, value in metrics.items():
+                log_key = f"{prefix}/{key}" if prefix else key
+                log_dict[log_key] = value
+            
+            wandb.log(log_dict, step=step)
+        except Exception as e:
+            print(f"Error logging metrics to W&B: {e}")
+            
+    def log_validation_results(self, avg_metrics : Dict[str, float], avg_loss: float, epoch: int):
+        
+        log_dict ={
+            "val/loss": avg_loss,
+            "val/pesq": avg_metrics['pesq'],
+            "val/stoi": avg_metrics['stoi'],
+            "val/ssnr": avg_metrics['ssnr'],
+            "val/csig": avg_metrics['csig'],
+            "val/cbak": avg_metrics['cbak'],
+            "val/covl": avg_metrics['covl'],
+        }
+        
+        self.log_metrics(log_dict, step=epoch)
+        
+    def log_training_epoch(self,  train_loss: float, epoch: int):
+
+        log_dict = {
+            "train/loss": train_loss,
+        }
+
+        self.log_metrics(log_dict, step=epoch)
+        
+    def log_epoch_summary(self, train_loss: float, val_loss: Optional[float], epoch: int):
+        
+        log_dict = {
+            "loss/train" : train_loss
+        }
+        
+        if val_loss is not None:
+            log_dict["loss/val"] = val_loss
+            
+        self.log_metrics(log_dict, step=epoch)
+        
+    def save_model_artifact(self, save_path: Path, filename: str, epoch: Optional[int] = None, metadata: Optional[Dict] = None):
+        
+        try:
+            artifact_name = f"model-{filename}"
+            if epoch is not None:
+                artifact_name += f"_{epoch}"
+            
+            artifact_metadata = {
+                "epoch": epoch,
+                "model": filename
+            }
+            
+            if metadata:
+                artifact_metadata.update(metadata)
+            
+            artifact = wandb.Artifact(
+                name = artifact_name,
+                type = "model",
+                metadata = artifact_metadata,
+                description = f"Model checkpoint at epoch {epoch}" if epoch is not None else ""
+            )
+            
+            artifact.add_file(save_path)
+            wandb.log_artifact(artifact)
+            print(f"Model artifact logged: {artifact_name}")
+            
+        except Exception as e:
+            print(f"Error saving model artifact to W&B: {e}")
+    
+    def finish(self):
+        
+        try:
+            wandb.finish()
+            print("W&B run finished.")
+        except Exception as e:
+            print(f"Error finishing W&B run: {e}")
+
+def create_training_logger(project_name: str = "dose-speech-enhancement") -> WandBTrainingLogger:
+    return WandBTrainingLogger(project_name=project_name)
+
 
 def evaluate_and_log_metrics(clean_speech_path, output_dir, model_name):
     # Fonksiyon, temiz ses yolu, model çıkış yolu ve model adını parametre olarak alır.
@@ -29,12 +148,12 @@ def evaluate_and_log_metrics(clean_speech_path, output_dir, model_name):
 
     # Ortalaması alınmış metrikleri bir sözlük (dictionary) haline getirir
     metrics = {
-        'csig': pm[0], # Sinyal kalitesi
-        'cbak': pm[1], # Arka plan gürültü kalitesi
-        'covl': pm[2], # Genel kalite
-        'pesq': pm[3], # Perceptual Evaluation of Speech Quality (Konuşma Kalitesinin Algısal Değerlendirilmesi)
-        'ssnr': pm[4], # Segmental Signal-to-Noise Ratio (Parçasal Sinyal-Gürültü Oranı)
-        'stoi': pm[5]  # Short-Time Objective Intelligibility (Kısa Süreli Konuşma Anlaşılırlığı)
+        'test/csig': pm[0], # Sinyal kalitesi
+        'test/cbak': pm[1], # Arka plan gürültü kalitesi
+        'test/covl': pm[2], # Genel kalite
+        'test/pesq': pm[3], # Perceptual Evaluation of Speech Quality (Konuşma Kalitesinin Algısal Değerlendirilmesi)
+        'test/ssnr': pm[4], # Segmental Signal-to-Noise Ratio (Parçasal Sinyal-Gürültü Oranı)
+        'test/stoi': pm[5]  # Short-Time Objective Intelligibility (Kısa Süreli Konuşma Anlaşılırlığı)
     }
 
     # W&B'ye metrikleri ve değerlendirme süresini loglar

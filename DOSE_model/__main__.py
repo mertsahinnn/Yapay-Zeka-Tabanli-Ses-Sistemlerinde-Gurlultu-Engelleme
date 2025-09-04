@@ -14,8 +14,6 @@
 # ==============================================================================
 
 from argparse import ArgumentParser
-from torch.cuda import device_count
-from torch.multiprocessing import spawn
 
 from learner import train
 from params import params
@@ -42,7 +40,7 @@ if __name__ == '__main__':
       help='maximum number of training epochs')
   parser.add_argument('--device_num', default=0, type=int, # Birden fazla gpu olmadi icin device_num 0 olacak
       help='train device number')
-  parser.add_argument('--fp16', action='store_true', default=False,
+  parser.add_argument('--fp16', action='store_true', default=True,
       help='use 16-bit floating point operations for training')
   parser.add_argument('--restore_model_name', type = str, default=None, # Yüklemek için kontrol noktası dosya adi
       help='path to a checkpoint file to restore from')

@@ -1,5 +1,5 @@
-from scipy.signal import stft, get_window, correlate, resample
-from scipy.linalg import solve_toeplitz, toeplitz
+from scipy.signal import stft, resample
+from scipy.linalg import toeplitz
 from pesq import pesq as pesq_inner  # pip install https://github.com/ludlows/python-pesq/archive/master.zip
 from pesq import PesqError
 # from pypesq import pesq

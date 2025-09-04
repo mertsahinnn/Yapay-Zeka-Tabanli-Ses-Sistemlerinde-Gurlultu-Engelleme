@@ -1,7 +1,7 @@
 # Buradi parametreleri makalede verilen degerlere gore degistir.
 
 
-program : sweep_train.py
+program : sweep_train.py  ## Burayi py dosyasinin konumuna gore degistir
 method : bayes
 metric :
   name : loss/validation

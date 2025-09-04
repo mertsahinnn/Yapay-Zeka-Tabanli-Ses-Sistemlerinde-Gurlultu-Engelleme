@@ -1,11 +1,7 @@
-from argparse import ArgumentParser, Namespace
-from torch.cuda import device_count
-from torch.multiprocessing import spawn
+from argparse import Namespace
 
 from learner import train
 from params import params
-
-import wandb
 
 def main():
   args = Namespace(

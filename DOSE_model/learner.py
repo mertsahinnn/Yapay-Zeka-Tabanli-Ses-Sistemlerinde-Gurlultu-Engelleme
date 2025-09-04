@@ -15,24 +15,18 @@
 
 # Gerekli kutuphanleri ice aktar
 from typing import Optional, Dict, List, Tuple
-import time
 from pathlib import Path
+
 import numpy as np
 import os
 import torch
 import torch.nn as nn
-import wandb # Log icin W&B kutuphanesi
 
-from torch.nn.parallel import DistributedDataParallel
-from torch.utils.data.distributed import DistributedSampler
-
-from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 from dataset import from_path
 from model import DOSE
-from params import AttrDict
 
-from metric import compare
+from wandb_logger import create_training_logger
 from metric import composite
 
 
@@ -139,6 +133,9 @@ class DOSELearner:
         print(f"🔄 EMA aktif edildi (decay={ema_decay})")
     else:
         self.ema_helper = None
+        
+    # W&B logger'i baslat
+    self.wandb_logger = create_training_logger()
 
   # Modelin ve optimizer'in durumunu kaydetmek icin sozluk dondurur
   def state_dict(self):
@@ -200,8 +197,13 @@ class DOSELearner:
       print(f"Model kaydedildi: {save_path}")
 
       # Wandb artifact'ı oluştur ve kaydet
-      self._save_wandb_artifact(save_path, filename, epoch)
+      metadata = {
+          "params": dict(self.params),
+      }
       
+      #self._save_wandb_artifact(save_path, filename, epoch)
+      self.wandb_logger.save_model_artifact(save_path, filename, epoch, metadata=metadata)
+
       # Platform bazli link olusturma  
       if os.name == 'nt': # Windows
         torch.save(self.state_dict(), link_path)
@@ -212,51 +214,6 @@ class DOSELearner:
 
     except Exception as e:
       print(f"Model kaydetme hatasi: {e}")
-
-    """
-    save_basename = f'{filename}-{epoch}.pt' # epoch sayisi ile kaydet
-    save_name = f'{self.model_dir}/{save_basename}'
-    link_name = f'{self.model_dir}/{filename}.pt'
-    torch.save(self.state_dict(), save_name)
-
-    # Wandb artifact olusturma ve kaydetme
-    artifact = wandb.Artifact(
-      name = f"model-{filename}",
-      type = "model",
-      description = f"Model weights at epoch {epoch}",
-      metadata = {
-          "epoch": epoch,
-          "model": filename
-      }
-    )
-    artifact.add_file(save_name)
-    wandb.log_artifact(artifact)
-    """
-
-  def _save_wandb_artifact(self, save_path: Path, filename: str, epoch: Optional[int]):
-    # Wandb artifact'i olusturur ve kaydeder.
-    try:
-      artifact_name = f"model-{filename}"
-      if epoch is not None:
-        artifact_name+= f"_{epoch}"
-        
-      artifact = wandb.Artifact(
-        name = artifact_name,
-        type = "model",
-        description = f"Model weights{f'at epoch {epoch}' if epoch is not None else ''}",
-        metadata = {
-            "epoch": epoch,
-            "model": filename,
-        }
-      )
-
-      artifact.add_file(save_path)
-      wandb.log_artifact(artifact)
-
-      print(f"Wandb artifact kaydedildi: {artifact_name}")
-
-    except Exception as e:
-      print(f"Wandb artifact kaydedilemedi: {e}")
 
   # Dosyadan kontrol noktasini yukler
   def restore_from_checkpoint(self, filename='weights'):
@@ -295,9 +252,6 @@ class DOSELearner:
       }
       count = 0
       batch_metrics_list = []
-
-      # Validation başlangıç zamanı
-      val_start_time = time.time()
 
       try:
           with torch.no_grad():
@@ -345,15 +299,13 @@ class DOSELearner:
           total_loss, total_metrics, batch_metrics_list, count
       )
 
-      # Validation süresini hesapla
-      val_duration = time.time() - val_start_time
-
       if self.is_master:
         ema_tag = " (EMA)" if self.ema_helper is not None else ""
         print(f"🔍 Val Loss{ema_tag}: {avg_loss:.4f} | PESQ: {avg_metrics['pesq']:.3f} | STOI: {avg_metrics['stoi']:.3f}")
 
       # WandB'a logla
-      self._log_to_wandb(avg_metrics, avg_loss, metric_std, epoch)
+      self.wandb_logger.log_validation_results(avg_metrics, avg_loss, epoch)
+      #self._log_to_wandb(avg_metrics, avg_loss, metric_std, epoch)
 
       return avg_loss
     
@@ -385,9 +337,9 @@ class DOSELearner:
         predicted = self.model(noisy, t, noisy)
         loss = self.loss_fn(audio, predicted.squeeze(1))
         
-        # Tüm batch için metrikleri hesapla (performans için ilk 4 sample)
+        # Tüm batch için metrikleri hesapla (performans için ilk 2 sample)
         batch_metrics = self._compute_batch_metrics(
-            audio, predicted, min(N, 4)
+            audio, predicted, min(N, 2)
         )
         
         return loss.item(), batch_metrics
@@ -469,37 +421,9 @@ class DOSELearner:
     
     # Ortalama metrikler
     avg_metrics = {k: v / count for k, v in total_metrics.items()}
-    
-    # Standart sapma hesaplama
-    metric_std = {}
-    if len(batch_metrics_list) > 1:
-        import numpy as np
-        for key in total_metrics.keys():
-            values = [batch_metrics.get(key, 0) for batch_metrics in batch_metrics_list]
-            metric_std[key] = float(np.std(values))
-    else:
-        metric_std = {k: 0.0 for k in total_metrics.keys()}
-    
-    return avg_loss, avg_metrics, metric_std
 
-  def _log_to_wandb(self, avg_metrics: Dict, avg_loss: float, metric_std: Dict, epoch: int) -> None:
-    """WandB'a kapsamlı logging yapar."""
-    
-    log_dict = {
-        # Ana metrikler
-        "val/loss": avg_loss,
-        "val/pesq": avg_metrics['pesq'],
-        "val/stoi": avg_metrics['stoi'],
-        "val/ssnr": avg_metrics['ssnr'],
-        "val/csig": avg_metrics['csig'],
-        "val/cbak": avg_metrics['cbak'],
-        "val/covl": avg_metrics['covl'],
-    }
-    
-    try:
-      wandb.log(log_dict, step=epoch)
-    except Exception as e:
-      print(f"WandB logging hatası: {e}")
+
+    return avg_loss, avg_metrics
 
   # Egitim dongusunu baslatir
   def train(self, max_steps=None, max_epochs=None, val_dataset=None, early_stopping_patience=4):
@@ -542,16 +466,8 @@ class DOSELearner:
         if val_dataset is not None:
             val_loss = self.validate(val_dataset, epoch)
 
-        # Train ve validation loss'unu epoch bazında aynı grafikte daha duzgun gorunur
-        log_dict = {
-            "loss/train": avg_train_loss,
-        }
+        self.wandb_logger.log_epoch_summary(avg_train_loss, val_loss, epoch)
         
-        if val_loss is not None:
-            log_dict["loss/validation"] = val_loss
-
-        wandb.log(log_dict, step=epoch)  # step olarak epoch kullan
-
         # Early stopping ve best model kaydetme
         if val_loss is not None:
           if val_loss < best_val_loss:
@@ -623,18 +539,9 @@ class DOSELearner:
       
     return loss
 
-  # W&B loglama yapar
-  
-  #def _write_summary(self, step, features, loss):
-  #  wandb.log({
-  #    "train/loss" : loss.item(), # Egitim kaybini logla
-  #    "train/grad_norm" : self.grad_norm, # Egitim gradyan normunu logla
-  #    "train/features" : features,
-  #    "train/step" : step,
-  #  }, step = step)
-
 # Egitim uygulamasinin ana fonksiyonu
-def _train_impl(replica_id, model, dataset, args, params, val_dataset):
+def _train_impl(replica_id, model, dataset, args, params, val_dataset, wandb_logger):
+  
   # Hız optimizasyonları
   torch.backends.cudnn.benchmark = True
 
@@ -649,8 +556,9 @@ def _train_impl(replica_id, model, dataset, args, params, val_dataset):
     params,
     fp16=args.fp16,
     use_ema=getattr(args, 'use_ema', True), # EMA parametresi
-    ema_decay=getattr(args, 'ema_decay', 0.999)
+    ema_decay=getattr(args, 'ema_decay', 0.999),
   )
+  
   learner.is_master = (replica_id == 0)
 
   # Arguman belirtilmisse o dosyadan yukle, yoksa varsayilani kullan
@@ -661,27 +569,70 @@ def _train_impl(replica_id, model, dataset, args, params, val_dataset):
   learner.train(max_steps=args.max_steps, max_epochs=args.max_epochs, val_dataset=val_dataset)
 
   if learner.is_master:
-    wandb.finish() # W&B oturumunu sonlandır
+    wandb_logger.finish() # W&B oturumunu sonlandır
 
 # Egitim surecini baslatir
 def train(args, params):
   
-  wandb.init(
-        project="dose-speech-enhancement", # W&B projesinin adı
-        job_type="train", # Çalışmanın türü (eğitim)
-        name = f"train_run_on_{args.train_noisy_speech_dir} - {args.train_clean_speech_dir}", # Oturum için benzersiz bir ad oluşturur
-        config= {
-          'learning_rate': params.learning_rate,
-          'dropout_rate': params.dropout_rate,
-          'step1': params.step1,
-          'step2': params.step2,
-          'use_ema': params.use_ema,
-          'ema_decay': params.ema_decay
-        } # Parametreleri W&B ile paylaş
-    )
+  # Parametreleri kategorilere ayır
+  training_params = {
+    'batch_size': params.batch_size,
+    'learning_rate': params.learning_rate,
+    'max_grad_norm': params.max_grad_norm,
+    'dropout_rate': params.dropout_rate,
+  }
+  
+  audio_params = {
+    'sample_rate': params.sample_rate,
+    'n_mels': params.n_mels,
+    'n_fft': params.n_fft,
+    'hop_samples': params.hop_samples,
+    'crop_mel_frames': params.crop_mel_frames,
+    'audio_len': params.audio_len,
+  }
+  
+  model_params = {
+    'residual_layers': params.residual_layers,
+    'residual_channels': params.residual_channels,
+    'dilation_cycle_length': params.dilation_cycle_length,
+    'unconditional': params.unconditional,
+  }
+  
+  diffusion_params = {
+    'step1': params.step1,
+    'step2': params.step2,
+    'noise_schedule': params.noise_schedule,
+    'inference_noise_schedule': params.inference_noise_schedule,
+  }
+  
+  ema_params = {
+    'use_ema': params.use_ema,
+    'ema_decay': params.ema_decay,
+  }
+  
+  # Tüm kategorileri birleştir
+  wandb_config = {}
+  wandb_config.update(training_params)
+  wandb_config.update(audio_params)
+  wandb_config.update(model_params)
+  wandb_config.update(diffusion_params)
+  wandb_config.update(ema_params)
+  
+  # Args parametreleri
+  wandb_config.update({
+    'train_noisy_speech_dir': args.train_noisy_speech_dir,
+    'train_clean_speech_dir': args.train_clean_speech_dir,
+    'model_dir': args.model_dir,
+  })
+  
+  wandb_logger = create_training_logger()
+  run_name = f"train_run_on_{args.train_noisy_speech_dir}_and_{args.train_clean_speech_dir}"
+  wandb_logger.init_run(run_name, wandb_config, job_type="train")
 
   # wandb.config'i params icine uygula
-  config = wandb.config
+  config = wandb_logger.get_config()
+  
+  # config = wandb.config
   params.learning_rate = config.learning_rate
   params.dropout_rate = config.dropout_rate
   params.step1 = config.step1
@@ -690,13 +641,12 @@ def train(args, params):
   # Gürültülü ve temiz ses dosyalarını yükle
   dataset = from_path(args.train_noisy_speech_dir, args.train_clean_speech_dir, params)
   val_dataset = from_path(args.val_noisy_speech_dir, args.val_clean_speech_dir, params) if hasattr(args, 'val_noisy_speech_dir') and hasattr(args, 'val_clean_speech_dir') else None
+  
   # Cihazı ayarla
   device = torch.device('cuda', args.device_num)
+  
   # DOSE modelini baslatir ve cihaza tasir
   model = DOSE(params).to(device)
 
-  # Modeli ve parametreleri izlemeye başla
-  # wandb.watch(model, log="all", log_freq=500)
-
-  _train_impl(0, model, dataset, args, params, val_dataset)
+  _train_impl(0, model, dataset, args, params, val_dataset, wandb_logger)
 
