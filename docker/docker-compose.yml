@@ -1,0 +1,48 @@
+services:
+  ai_dose_project:
+    build: .
+    container_name: ai-gpu-env
+    ports:
+      - "8888:8888" # Jupyter Notebook portu
+      - "7860:7860" # Gradio portu
+
+    volumes:
+      - .:/workspace
+
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - JUPYTER_ENABLE_LAB=yes
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    stdin_open: true
+    tty: true
+    command: jupyter notebook --ip=0.0.0.0 --port=8888 --no-browser --allow-root
+
+    # Gradio servisi
+  gradio_service:
+    build: .
+    container_name: gradio-service
+    ports:
+      - "7860:7860" # Gradio portu
+    volumes:
+      - .:/workspace
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    working_dir: /workspace/gradio
+    command: python main.py

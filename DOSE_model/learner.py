@@ -295,7 +295,7 @@ class DOSELearner:
           return float('inf')
 
       # Sonuçları hesapla
-      avg_loss, avg_metrics, metric_std = self._compute_validation_results(
+      avg_loss, avg_metrics = self._compute_validation_results(
           total_loss, total_metrics, batch_metrics_list, count
       )
 
@@ -333,8 +333,16 @@ class DOSELearner:
         # Validation için t=0 kullan (direkt denoising)
         t = torch.zeros(N, dtype=torch.long, device=audio.device)
         
+        # Conditional mode icin spektrogram kullan
+        if not self.params.unconditional and 'mel_spectrogram' in features:
+          spectrogram = features['mel_spectrogram']
+          predicted = self.model(noisy, t, spectrogram)
+        
+        else:
+          predicted = self.model(noisy, t, noisy)
+          
+        
         # Model inference
-        predicted = self.model(noisy, t, noisy)
         loss = self.loss_fn(audio, predicted.squeeze(1))
         
         # Tüm batch için metrikleri hesapla (performans için ilk 2 sample)
@@ -519,8 +527,17 @@ class DOSELearner:
       
       # Gürültülü sesi oluşturur
       noisy_audio = noise_scale_sqrt * audio + (1.0 - noise_scale)**0.5 * noise
-      # Modeli çalıştırır ve tahmini alır
-      predicted = self.model(noisy_audio, t, noisy)
+      
+      # Conditional mode icin spektrogram kullan
+      if not self.params.unconditional and 'mel_spectrogram' in features:
+        spectrogram = features['mel_spectrogram']
+        # Modeli çalıştırır ve tahmini alır
+        predicted = self.model(noisy_audio, t, spectrogram)
+        
+      else:
+        # Modeli çalıştırır ve tahmini alır
+        predicted = self.model(noisy_audio, t, noisy)
+        
       # Tahmin ile orijinal temiz ses arasindaki kaybi hesaplar
       loss = self.loss_fn(audio_orig, predicted.squeeze(1))
 

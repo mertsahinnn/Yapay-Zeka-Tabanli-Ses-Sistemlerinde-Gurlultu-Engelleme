@@ -1,0 +1,434 @@
+# ================================================
+# Python
+# ================================================
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff:
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+
+# Flask stuff:
+instance/
+.webassets-cache
+
+# Scrapy stuff:
+.scrapy
+
+# Sphinx documentation
+docs/_build/
+
+# PyBuilder
+.pybuilder/
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# pipenv
+Pipfile.lock
+
+# poetry
+poetry.lock
+
+# pdm
+.pdm.toml
+
+# PEP 582
+__pypackages__/
+
+# Celery stuff
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# pytype static type analyzer
+.pytype/
+
+# Cython debug symbols
+cython_debug/
+
+# ================================================
+# Machine Learning & Data Science
+# ================================================
+# Model weights and checkpoints
+*.pt
+*.pth
+*.ckpt
+*.h5
+*.hdf5
+*.pkl
+*.pickle
+*.joblib
+*.model
+weights/
+checkpoints/
+models/weights/
+DOSE_model/weights/
+*.safetensors
+
+
+# MLflow
+mlruns/
+.mlflow/
+
+# Experiment tracking
+experiments/
+results/
+outputs/
+
+
+# Audio processing temp files
+temp_audio/
+processed_audio/
+audio_cache/
+
+
+# ================================================
+# Jupyter Notebooks
+# ================================================
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/*
+
+# Jupyter Notebook temp files
+.virtual_documents/
+
+# ================================================
+# IDE and Editor files
+# ================================================
+# Visual Studio Code
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+
+# PyCharm
+.idea/
+*.iws
+*.iml
+*.ipr
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim
+*.swp
+*.swo
+*~
+
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list
+tramp
+.\#*
+
+# ================================================
+# Operating System
+# ================================================
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# ================================================
+# Docker
+# ================================================
+# Docker build context
+.dockerignore
+
+# Docker volumes
+docker-volumes/
+
+# ================================================
+# Gradio
+# ================================================
+.gradio/
+gradio_cached_examples/
+flagged/
+
+# ================================================
+# Conda
+# ================================================
+# Conda environments
+.conda/
+conda-meta/
+
+# ================================================
+# Large Files and Temporary
+# ================================================
+# Large files (>100MB should use Git LFS)
+*.zip
+*.tar.gz
+*.tgz
+*.rar
+*.7z
+
+# Temporary files
+temp/
+tmp/
+*.tmp
+*.temp
+*.cache
+
+# Log files
+*.log
+logs/
+
+# ================================================
+# Project Specific
+# ================================================
+# Configuration files with sensitive data
+config/local_config.yaml
+config/secrets.yaml
+.secrets/
+
+# Large academic papers (keep only references)
+makale/Genel\ Konu\ Arastirma/*.pdf
+belgeler/*.pdf
+
+# Backup files
+*.bak
+*.backup
+*_backup.*
+
+# Test outputs
+test_outputs/
+test_results/
+
+
+# Performance profiling
+*.prof
+*.cprof
+
+# Compiled translations
+*.mo
+
+# ================================================
+# Cloud and Deployment
+# ================================================
+# AWS
+.aws/
+
+# Google Cloud
+.gcloud/
+service-account-key.json
+
+# Azure
+.azure/
+
+# Kubernetes
+*.kubeconfig
+
+# ================================================
+# Version Control
+# ================================================
+# Git
+.git/
+*.orig
+
+# SVN
+.svn/
+
+# Mercurial
+.hg/
+.hgignore
+
+# ================================================
+# Documentation
+# ================================================
+# Sphinx
+_build/
+_static/
+_templates/
+
+# ================================================
+# Package managers
+# ================================================
+# npm
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ================================================
+# Miscellaneous
+# ================================================
+# Thumbnails
+*.thumbnail
+
+# Files that might appear in the root of a volume
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# Directories potentially created on remote AFP share
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# ================================================
+# Keep these files
+# ================================================
+# Keep specific important files even if they match patterns above
+!requirements.txt
+!README.md
+!LICENSE
+!.gitignore
+!docker-compose.yml
+!Dockerfile
+!setup.py
+!pyproject.toml
+
+# Keep sample configuration files
+!config/example_*.yaml
+!config/template_*.yaml
+
+# Keep documentation images
+!docs/**/*.png
+!docs/**/*.jpg
+!docs/**/*.svg
+
+# Keep small example audio files (if any)
+!examples/**/*.wav
+
+# Keep test files
+!tests/**/*

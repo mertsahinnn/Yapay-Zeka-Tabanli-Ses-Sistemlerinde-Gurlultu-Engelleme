@@ -96,19 +96,27 @@ class ResidualBlock(nn.Module):
     super().__init__()
     self.dilated_conv = Conv1d(residual_channels, 2 * residual_channels, 3, padding=dilation, dilation=dilation)
     self.diffusion_projection = Linear(512, residual_channels)
- 
     
+    # unconda parametresini sinif ozniteligi olarak sakla
+    self.uncond = uncond
 
-
+    # Conditional mode icin spektrogram projection ekle - residual_channels boyutunda olmalı
+    if not uncond:
+      self.conditioner_projection = Conv1d(n_mels, residual_channels, 1)  # 2 * residual_channels değil!
+    
+    
     self.output_projection = Conv1d(residual_channels, 2 * residual_channels, 1)
 
   def forward(self, x, diffusion_step, conditioner=None):
 
     diffusion_step = self.diffusion_projection(diffusion_step).unsqueeze(-1)
     y = x + diffusion_step
+    
+    # conditional mode: spektrogram  bilgisini ekle
+    if not self.uncond and conditioner is not None:
+      y = y + self.conditioner_projection(conditioner)
 
     y = self.dilated_conv(y)
-
     gate, filter = torch.chunk(y, 2, dim=1)
     y = torch.sigmoid(gate) * torch.tanh(filter)
 
@@ -148,25 +156,63 @@ class DOSE(nn.Module):
     nn.init.zeros_(self.output_projection.weight)
   
   def forward(self, audio, diffusion_step, spectrogram=None):
-    audio = audio.unsqueeze(1)
-    spectrogram = spectrogram.unsqueeze(1)
-    x = torch.cat([audio, spectrogram], dim=1)
+    audio = audio.unsqueeze(1)  # [batch, 1, time]
+    
+    # Spektrogram boyutlarını kontrol et ve uygun şekilde yeniden boyutlandır
+    processed_spectrogram = None
+    if spectrogram is not None:
+      if len(spectrogram.shape) == 3:  # [batch, n_mels, time_frames]
+        # Mel-spektrogramı ses uzunluğuna göre interpolate et
+        target_length = audio.shape[-1]  # ses uzunluğu
+        
+        # Spektrogramı ses uzunluğuna interpolate et
+        spectrogram_interpolated = F.interpolate(
+            spectrogram.unsqueeze(1), 
+            size=(spectrogram.shape[1], target_length), 
+            mode='bilinear', 
+            align_corners=False
+        ).squeeze(1)  # [batch, n_mels, target_length]
+        
+        # ResidualBlock'lar için orijinal mel-spektrogramı kullan
+        processed_spectrogram = spectrogram_interpolated
+        
+        # Audio concatenation için tek kanala indirgenen versiyonu
+        spectrogram_for_concat = torch.mean(spectrogram_interpolated, dim=1, keepdim=True)  # [batch, 1, target_length]
+        
+      elif len(spectrogram.shape) == 2:  # [batch, time_frames]
+        spectrogram_for_concat = spectrogram.unsqueeze(1)  # [batch, 1, time_frames]
+        
+        # Spektrogramı ses uzunluğuna interpolate et
+        target_length = audio.shape[-1]
+        if spectrogram_for_concat.shape[-1] != target_length:
+          spectrogram_for_concat = F.interpolate(
+              spectrogram_for_concat.unsqueeze(1), 
+              size=target_length, 
+              mode='linear', 
+              align_corners=False
+          ).squeeze(1)  # [batch, 1, target_length]
+        
+        # ResidualBlock'lar için de aynısını kullan (tek kanal olduğu için)
+        processed_spectrogram = spectrogram_for_concat
+    
+    else:
+      # Unconditional mode için noisy audio kullan
+      spectrogram_for_concat = audio  # [batch, 1, time]
+      processed_spectrogram = None
+    
+    x = torch.cat([audio, spectrogram_for_concat], dim=1)  # [batch, 2, time]
     x = self.version46_input_projection(x)
     
-
-   
     x = F.relu(x)
 
     diffusion_step = self.diffusion_embedding(diffusion_step)
     
-    
     skip = None
     for layer in self.residual_layers:
-      x, skip_connection = layer(x, diffusion_step, spectrogram)
+      # ResidualBlock'a doğru boyuttaki spektrogram gönder
+      x, skip_connection = layer(x, diffusion_step, processed_spectrogram)
       skip = skip_connection if skip is None else skip_connection + skip
 
- 
-    
     x = skip / sqrt(len(self.residual_layers))
     x = self.skip_projection(x)
     x = F.relu(x)
