@@ -434,7 +434,7 @@ class DOSELearner:
     return avg_loss, avg_metrics
 
   # Egitim dongusunu baslatir
-  def train(self, max_steps=None, max_epochs=None, val_dataset=None, early_stopping_patience=4):
+  def train(self, max_steps=None, max_epochs=None, val_dataset=None, early_stopping_patience=3):
     # Modeli dogru cihaza (GPU/CPU) tasir
     device = next(self.model.parameters()).device
     epoch = 0

@@ -8,6 +8,7 @@ from pystoi.stoi import stoi  # https://github.com/mpariente/pystoi
 import numpy as np
 import torch
 import sys
+import argparse
 
 
 #################################################
@@ -622,7 +623,6 @@ def compare(refdir, degdir, use_tqdm=True):
 if __name__ == "__main__":
     import numpy as np
     import sys, time
-    import wandb
 
 
     # Argumentları ayrıştır

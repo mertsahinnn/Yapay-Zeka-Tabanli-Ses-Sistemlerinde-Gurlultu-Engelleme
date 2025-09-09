@@ -46,13 +46,13 @@ params = AttrDict(
     
     # EMA params
     use_ema = True,
-    ema_decay = 0.9999,
+    ema_decay = 0.99,
     
     # Model params
     residual_layers=30,
     residual_channels=64,
     dilation_cycle_length=10,
-    unconditional = False,
+    unconditional = True,
     step1 = 35,
     step2 = 15,
     noise_schedule=np.linspace(1e-4, 0.035, 50).tolist(),

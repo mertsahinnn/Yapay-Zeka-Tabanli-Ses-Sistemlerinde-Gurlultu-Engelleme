@@ -10,7 +10,7 @@ from metric import compare # Metrik hesaplama fonksiyonu
 class WandBTrainingLogger:
     '''Egitim surecindeki wandb loglama islemlerini yapar'''
     
-    def __init__(self, project_name: str = "dose-speech-enhancement"):
+    def __init__(self, project_name: str = "Ai_based_Noise_Cancellation"):
         
         self.project_name = project_name
         self.run = None
@@ -126,9 +126,89 @@ def create_training_logger(project_name: str = "dose-speech-enhancement") -> Wan
 def evaluate_and_log_metrics(clean_speech_path, output_dir, model_name):
     # Fonksiyon, temiz ses yolu, model çıkış yolu ve model adını parametre olarak alır.
 
+    try:
+        wandb.init(
+            project="Ai_based_Noise_Cancellation", # W&B projesinin adı
+            group= model_name, # İlgili çalıştırmaları gruplamak için model adı kullanılır
+            job_type="evaluation", # Çalışmanın türü (değerlendirme)
+            name = f"evaluation_run_on_{os.path.basename(output_dir)}", # Oturum için benzersiz bir ad oluşturur
+            config={
+                "clean_speech_path": clean_speech_path, # Temiz ses dosyalarının yolu
+                "output_dir": output_dir # Modelin ürettiği dosyaların yolu
+            }
+        )
+        
+        # Klasorün varlığını kontrol et
+        if not os.path.exists(clean_speech_path):
+            raise FileNotFoundError(f"Clean speech path does not exist: {clean_speech_path}")
+        if not os.path.exists(output_dir):
+            raise FileNotFoundError(f"Output directory does not exist: {output_dir}")
+        
+        t1 = time.time() # Değerlendirme başlangıç zamanı
+        res = compare(clean_speech_path, output_dir) # Temiz ve gürültülü ses dosyalarını karşılaştırır ve metrikleri hesaplar
+        
+        if not res or len(res) == 0:
+            print("No results returned from compare function.")
+            return
+        
+        t2 = time.time() # Değerlendirme bitiş zamanı
+
+        # Hesaplanan metrikleri (res) bir numpy dizisine dönüştürür ve ortalamasını alır
+        pm = np.array([x[0:] for x in res])
+        pm = np.mean(pm, axis=0) # Tüm dosyaların metrik ortalamalarını hesaplar
+        
+        if len(pm) < 6:
+            print(f"Unexpected number of metrics returned: {len(pm)}. Expected at least 6.")
+            return
+        
+        metrics = {
+            'test/csig': pm[0], # Sinyal kalitesi
+            'test/cbak': pm[1], # Arka plan gürültü kalitesi
+            'test/covl': pm[2], # Genel kalite
+            'test/pesq': pm[3], # Perceptual Evaluation of Speech Quality (Konuşma Kalitesinin Algısal Değerlendirilmesi)
+            'test/ssnr': pm[4], # Segmental Signal-to-Noise Ratio (Parçasal Sinyal-Gürültü Oranı)
+            'test/stoi': pm[5]  # Short-Time Objective Intelligibility (Kısa Süreli Konuşma Anlaşılırlığı)
+        }
+        
+        wandb.log(
+            {
+                "evaluation_time": t2 - t1, # Değerlendirme için geçen süre
+                **metrics # "metrics" sözlüğündeki tüm metrikleri ana sözlüğe ekler (dictionary unpacking)
+            }
+        )
+        
+        # Sonuçları konsola yazdır
+        print(f'Time: {t2 - t1:.3f} seconds')
+        print(f'Reference: {clean_speech_path}')
+        print(f'Degraded: {output_dir}')
+        print('csig:%6.4f cbak:%6.4f covl:%6.4f pesq:%6.4f ssnr:%6.4f stoi:%6.4f' % tuple(pm))
+        
+    except Exception as e:
+        print(f"Error during evaluation and logging: {e}")
+    finally:
+        try:
+            wandb.finish()
+            print("W&B run finished.")
+        except Exception as e:
+            print(f"Error finishing W&B run: {e}")
+
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    """
     # W&B oturumunu başlatır
     wandb.init(
-        project="dose-speech-enhancement", # W&B projesinin adı
+        project="Ai_based_Noise_Cancellation", # W&B projesinin adı
         group= model_name, # İlgili çalıştırmaları gruplamak için model adı kullanılır
         job_type="evaluation", # Çalışmanın türü (değerlendirme)
         name = f"evaluation_run_on_{os.path.basename(output_dir)}", # Oturum için benzersiz bir ad oluşturur
@@ -173,3 +253,4 @@ def evaluate_and_log_metrics(clean_speech_path, output_dir, model_name):
     
     # W&B oturumunu sonlandırır
     wandb.finish()
+    """

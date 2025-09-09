@@ -15,10 +15,7 @@ parameters:
     distribution : uniform
     min : 0.2
     max : 0.8
-  step1 : 
-    values : [25, 30, 35, 40, 45]
-  step2 :
-    values : [10, 15, 20, 25]
+
 early_terminate:
   type : hyperband
   min_iter : 3
